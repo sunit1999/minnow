@@ -1,12 +1,18 @@
 #pragma once
 
 #include "byte_stream.hh"
+#include <unordered_map>
+
+using namespace std;
 
 class Reassembler
 {
 public:
   // Construct Reassembler to write into given ByteStream.
-  explicit Reassembler( ByteStream&& output ) : output_( std::move( output ) ) {}
+  explicit Reassembler( ByteStream&& output ) 
+  : output_( std::move( output ) ),
+  buffer()
+  {}
 
   /*
    * Insert a new substring to be reassembled into a ByteStream.
@@ -40,6 +46,24 @@ public:
   // Access output stream writer, but const-only (can't write from outside)
   const Writer& writer() const { return output_.writer(); }
 
+  // Buffer Capacity
+  uint64_t available_capacity() {
+    return writer().available_capacity();
+  }
+
+  uint64_t first_unassembled_idx() {
+    return writer().bytes_pushed();
+  }
+
+  uint64_t first_unacceptable_idx() {
+    return first_unassembled_idx() + available_capacity();
+  }
+
 private:
   ByteStream output_; // the Reassembler writes to this ByteStream
+  uint64_t _bytes_pending = 0;
+  bool _eof = false;
+  unordered_map<uint64_t, char> buffer;
+
+  void check_contiguous();
 };

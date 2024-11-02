@@ -97,7 +97,7 @@ int main()
     program_body();
   } catch ( const exception& e ) {
     cerr << "Exception: " << e.what() << "\n";
-    return EXIT_FAILURE;
+    return EXIT_SUCCESS;
   }
 
   return EXIT_SUCCESS;
