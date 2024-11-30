@@ -47,11 +47,11 @@ public:
   const Writer& writer() const { return output_.writer(); }
 
   // Buffer Capacity
-  uint64_t available_capacity() {
+  uint64_t available_capacity() const {
     return writer().available_capacity();
   }
 
-  uint64_t first_unassembled_idx() {
+  uint64_t first_unassembled_idx() const {
     return writer().bytes_pushed();
   }
 
