@@ -4,7 +4,6 @@ using namespace std;
 
 ByteStream::ByteStream( uint64_t capacity ) 
   : capacity_(capacity), deque_(), bytes_pushed_(0), bytes_popped_(0) {
-  cout << "Initialized ByteStream with capacity " << capacity << " bytes" << endl;
 }
 
 bool Writer::is_closed() const
@@ -18,7 +17,6 @@ void Writer::push( string data )
   // Your code here.
   // (void)data;
   if (data.size() > available_capacity()) {
-    cout<<"Writer::push: Pipe capacity full after push. Dropping extra bytes"<<endl;
   }
 
   for(const char& c: data) {
