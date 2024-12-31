@@ -16,7 +16,11 @@ class TCPSender
 public:
   /* Construct TCP sender with given default Retransmission Timeout and possible ISN */
   TCPSender( ByteStream&& input, Wrap32 isn, uint64_t initial_RTO_ms )
-    : input_( std::move( input ) ), isn_( isn ), initial_RTO_ms_( initial_RTO_ms )
+    : input_( std::move( input ) ),
+      isn_( isn ), 
+      initial_RTO_ms_( initial_RTO_ms ), 
+      curr_RTO_ms_( initial_RTO_ms ),
+      q()
   {}
 
   /* Generate an empty TCPSenderMessage */
@@ -42,10 +46,30 @@ public:
 
   // Access input stream reader, but const-only (can't read from outside)
   const Reader& reader() const { return input_.reader(); }
+  Reader& reader() { return input_.reader(); }
+
+  Wrap32 get_wrapped_next_seqno() const {
+    return Wrap32::wrap(next_seqno_, isn_);
+  }
+
+  // Utility method to save and transmit a segment
+  void send_segment(TCPSenderMessage& msg, const TransmitFunction& transmit);
 
 private:
   // Variables initialized in constructor
   ByteStream input_;
   Wrap32 isn_;
   uint64_t initial_RTO_ms_;
+
+  uint64_t next_seqno_ = 0;    // next absolute seqno to be sent
+  uint64_t latest_ackno_ = 0;  // max ackno recieved
+  uint16_t latest_window_size_ = 1;  // window size advertised by reciever
+  uint64_t consecutive_retransmissions_ = 0;
+  uint64_t retransmission_timer_ms_ = 0;  // Time in ms since any segment was sent
+  uint64_t curr_RTO_ms_;  // Threshold for retransmission timer, can backoff
+
+  bool syn_sent = false;
+  bool fin_sent = false;
+
+  std::queue<TCPSenderMessage> q; // Save segments locally to track unacknowledged segments
 };
