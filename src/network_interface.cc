@@ -30,6 +30,49 @@ void NetworkInterface::send_datagram( const InternetDatagram& dgram, const Addre
   // Your code here.
   (void)dgram;
   (void)next_hop;
+
+  EthernetFrame frame = EthernetFrame();
+  EthernetHeader header = EthernetHeader();
+
+  // dst's MAC address found in Cache
+  if (cache_.find(next_hop.ipv4_numeric()) != cache_.end())
+  {
+    header.type = EthernetHeader::TYPE_IPv4;
+    header.src = ethernet_address_;
+    header.dst = cache_[next_hop.ipv4_numeric()].first;
+
+    frame.header = header;
+    frame.payload = serialize(dgram);
+
+    transmit(frame);
+    return;
+  }
+  
+  // else, send ARP request to find dst's MAC address
+  header.type = EthernetHeader::TYPE_ARP;
+  header.src = ethernet_address_;
+  header.dst = ETHERNET_BROADCAST;
+
+  ARPMessage arp_req = ARPMessage();
+  arp_req.opcode = ARPMessage::OPCODE_REQUEST;
+  arp_req.sender_ip_address = ip_address_.ipv4_numeric();
+  arp_req.sender_ethernet_address = ethernet_address_;
+  arp_req.target_ip_address = next_hop.ipv4_numeric();
+
+  frame.header = header;
+  frame.payload = serialize(arp_req);
+
+  // Only transmit if last request was sent more than 5 seconds ago
+  if (
+    outbound_arp_requests_.find(next_hop.ipv4_numeric()) == outbound_arp_requests_.end() or
+    uptime_ms_ - outbound_arp_requests_[next_hop.ipv4_numeric()] > MAX_RETX_WAITING_TIME
+  )
+  {
+    transmit(frame);
+    outbound_arp_requests_[next_hop.ipv4_numeric()] = uptime_ms_;
+  }
+
+  outbound_datagrams_[next_hop.ipv4_numeric()].push_back(dgram);
 }
 
 //! \param[in] frame the incoming Ethernet frame
@@ -37,6 +80,71 @@ void NetworkInterface::recv_frame( const EthernetFrame& frame )
 {
   // Your code here.
   (void)frame;
+
+  EthernetHeader header = frame.header;
+  if (header.dst != ethernet_address_ and header.dst != ETHERNET_BROADCAST)
+  {
+    cerr << "DEBUG: Destination MAC address -> " << to_string(header.dst) << " invalid" << endl;
+    return;
+  }
+
+  if (header.type == EthernetHeader::TYPE_IPv4)
+  {
+    InternetDatagram dgram {};
+    if (!parse(dgram, frame.payload)) {
+      cerr << "DEBUG: Failed to parse IP Datagram" << endl;
+      return;
+    }
+
+    datagrams_received_.push(dgram);
+    return;
+  }
+  
+  ARPMessage arp_req {};
+  if (!parse(arp_req, frame.payload)) {
+    cerr << "DEBUG: Failed to parse ARP Message" << endl;
+    return;
+  }
+
+  // Save IP -> MAC
+  cache_[arp_req.sender_ip_address] = { arp_req.sender_ethernet_address, uptime_ms_ };
+
+  // Only respond, if MAC corresponding to our IP is requested
+  if (arp_req.opcode == ARPMessage::OPCODE_REQUEST and arp_req.target_ip_address == ip_address_.ipv4_numeric())
+  {
+    EthernetFrame res_frame = EthernetFrame();
+    EthernetHeader res_header = EthernetHeader();
+    ARPMessage arp_reply = ARPMessage();
+
+    arp_reply.opcode = ARPMessage::OPCODE_REPLY;
+    arp_reply.sender_ip_address = ip_address_.ipv4_numeric();
+    arp_reply.sender_ethernet_address = ethernet_address_;
+    arp_reply.target_ip_address = arp_req.sender_ip_address;
+    arp_reply.target_ethernet_address = arp_req.sender_ethernet_address;
+
+    res_header.type = EthernetHeader::TYPE_ARP;
+    res_header.src = ethernet_address_;
+    res_header.dst = arp_req.sender_ethernet_address;
+
+    res_frame.header = res_header;
+    res_frame.payload = serialize(arp_reply);
+
+    transmit(res_frame);
+    return;
+  }
+
+  if (arp_req.opcode == ARPMessage::OPCODE_REPLY) {
+    if (outbound_datagrams_.find(arp_req.sender_ip_address) != outbound_datagrams_.end()) {
+      for (InternetDatagram dgram: outbound_datagrams_[arp_req.sender_ip_address]) {
+        send_datagram(dgram, Address::from_ipv4_numeric(arp_req.sender_ip_address));
+      }
+
+      // Remove outstanding requests
+      outbound_datagrams_.erase(arp_req.sender_ip_address);
+      outbound_arp_requests_.erase(arp_req.sender_ip_address);
+    }
+  }
+
 }
 
 //! \param[in] ms_since_last_tick the number of milliseconds since the last call to this method
@@ -44,4 +152,16 @@ void NetworkInterface::tick( const size_t ms_since_last_tick )
 {
   // Your code here.
   (void)ms_since_last_tick;
+
+  uptime_ms_ += ms_since_last_tick;
+
+  // Evict cache entries after 30s
+  for (auto it = cache_.begin(); it != cache_.end(); ) {
+      if (uptime_ms_ - it->second.second > MAX_CACHE_TIME) {
+          it = cache_.erase(it); // Correct way to erase during iteration
+      } else {
+          ++it;
+      }
+  }
+
 }

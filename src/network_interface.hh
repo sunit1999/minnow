@@ -1,6 +1,7 @@
 #pragma once
 
 #include <queue>
+#include <unordered_map>
 
 #include "address.hh"
 #include "ethernet_frame.hh"
@@ -81,4 +82,21 @@ private:
 
   // Datagrams that have been received
   std::queue<InternetDatagram> datagrams_received_ {};
+
+  // IP -> { MAC address, timestamp } cache. Used for ARP
+  std::unordered_map<uint32_t, std::pair<EthernetAddress, size_t>> cache_ {};
+
+  // next_hop IP -> IP Datagram
+  std::unordered_map<uint32_t, std::vector<InternetDatagram>> outbound_datagrams_ {};
+
+  // next_hop IP -> timestamp in ms
+  std::unordered_map<uint32_t, size_t> outbound_arp_requests_ {};
+
+  size_t uptime_ms_ {};
+
+  //! only resend ARP request for the same IPv4 address after 5000s
+  static constexpr size_t MAX_RETX_WAITING_TIME = 5000; 
+
+  //! cache the mapping for 30,000ms
+  static constexpr size_t MAX_CACHE_TIME = 30000;
 };
