@@ -35,4 +35,21 @@ public:
 private:
   // The router's collection of network interfaces
   std::vector<std::shared_ptr<NetworkInterface>> _interfaces {};
+
+  struct RouteEntry {
+      uint32_t route_prefix = 0;
+      uint8_t prefix_length = 0;
+      std::optional<Address> next_hop = std::nullopt;
+      size_t interface_num = 0;
+  };
+  
+  std::vector<RouteEntry> _route_list{};
+
+  // Route each datagram by performing Longest-Prefix-Match on routing table
+  void route_datagram(InternetDatagram& dgram);
+
+  /**
+   * @brief True if first `len` MSB of both IP match 
+   **/ 
+  bool is_match(uint32_t ip1, uint32_t ip2, uint8_t len);
 };
