@@ -35,7 +35,7 @@ void NetworkInterface::send_datagram( const InternetDatagram& dgram, const Addre
   EthernetHeader header = EthernetHeader();
 
   // dst's MAC address found in Cache
-  if (cache_.find(next_hop.ipv4_numeric()) != cache_.end())
+  if (cache_.contains(next_hop.ipv4_numeric()))
   {
     header.type = EthernetHeader::TYPE_IPv4;
     header.src = ethernet_address_;
@@ -62,17 +62,18 @@ void NetworkInterface::send_datagram( const InternetDatagram& dgram, const Addre
   frame.header = header;
   frame.payload = serialize(arp_req);
 
+  // Save datagram until its dst MAC is found out
+  outbound_datagrams_[next_hop.ipv4_numeric()].push_back(dgram);
+
   // Only transmit if last request was sent more than 5 seconds ago
   if (
-    outbound_arp_requests_.find(next_hop.ipv4_numeric()) == outbound_arp_requests_.end() or
+    !outbound_arp_requests_.contains(next_hop.ipv4_numeric()) or
     uptime_ms_ - outbound_arp_requests_[next_hop.ipv4_numeric()] > MAX_RETX_WAITING_TIME
   )
   {
     transmit(frame);
     outbound_arp_requests_[next_hop.ipv4_numeric()] = uptime_ms_;
   }
-
-  outbound_datagrams_[next_hop.ipv4_numeric()].push_back(dgram);
 }
 
 //! \param[in] frame the incoming Ethernet frame
@@ -81,16 +82,15 @@ void NetworkInterface::recv_frame( const EthernetFrame& frame )
   // Your code here.
   (void)frame;
 
-  EthernetHeader header = frame.header;
-  if (header.dst != ethernet_address_ and header.dst != ETHERNET_BROADCAST)
+  if (frame.header.dst != ethernet_address_ and frame.header.dst != ETHERNET_BROADCAST)
   {
-    cerr << "DEBUG: Destination MAC address -> " << to_string(header.dst) << " invalid" << endl;
+    cerr << "DEBUG: Destination MAC address -> " << to_string(frame.header.dst) << " invalid" << endl;
     return;
   }
 
-  if (header.type == EthernetHeader::TYPE_IPv4)
+  if (frame.header.type == EthernetHeader::TYPE_IPv4)
   {
-    InternetDatagram dgram {};
+    InternetDatagram dgram;
     if (!parse(dgram, frame.payload)) {
       cerr << "DEBUG: Failed to parse IP Datagram" << endl;
       return;
@@ -100,17 +100,17 @@ void NetworkInterface::recv_frame( const EthernetFrame& frame )
     return;
   }
   
-  ARPMessage arp_req {};
-  if (!parse(arp_req, frame.payload)) {
+  ARPMessage msg {};
+  if (!parse(msg, frame.payload)) {
     cerr << "DEBUG: Failed to parse ARP Message" << endl;
     return;
   }
 
   // Save IP -> MAC
-  cache_[arp_req.sender_ip_address] = { arp_req.sender_ethernet_address, uptime_ms_ };
+  cache_[msg.sender_ip_address] = { msg.sender_ethernet_address, uptime_ms_ };
 
   // Only respond, if MAC corresponding to our IP is requested
-  if (arp_req.opcode == ARPMessage::OPCODE_REQUEST and arp_req.target_ip_address == ip_address_.ipv4_numeric())
+  if (msg.opcode == ARPMessage::OPCODE_REQUEST and msg.target_ip_address == ip_address_.ipv4_numeric())
   {
     EthernetFrame res_frame = EthernetFrame();
     EthernetHeader res_header = EthernetHeader();
@@ -119,12 +119,12 @@ void NetworkInterface::recv_frame( const EthernetFrame& frame )
     arp_reply.opcode = ARPMessage::OPCODE_REPLY;
     arp_reply.sender_ip_address = ip_address_.ipv4_numeric();
     arp_reply.sender_ethernet_address = ethernet_address_;
-    arp_reply.target_ip_address = arp_req.sender_ip_address;
-    arp_reply.target_ethernet_address = arp_req.sender_ethernet_address;
+    arp_reply.target_ip_address = msg.sender_ip_address;
+    arp_reply.target_ethernet_address = msg.sender_ethernet_address;
 
     res_header.type = EthernetHeader::TYPE_ARP;
     res_header.src = ethernet_address_;
-    res_header.dst = arp_req.sender_ethernet_address;
+    res_header.dst = msg.sender_ethernet_address;
 
     res_frame.header = res_header;
     res_frame.payload = serialize(arp_reply);
@@ -133,18 +133,17 @@ void NetworkInterface::recv_frame( const EthernetFrame& frame )
     return;
   }
 
-  if (arp_req.opcode == ARPMessage::OPCODE_REPLY) {
-    if (outbound_datagrams_.find(arp_req.sender_ip_address) != outbound_datagrams_.end()) {
-      for (InternetDatagram dgram: outbound_datagrams_[arp_req.sender_ip_address]) {
-        send_datagram(dgram, Address::from_ipv4_numeric(arp_req.sender_ip_address));
+  if (msg.opcode == ARPMessage::OPCODE_REPLY) {
+    if (outbound_datagrams_.contains(msg.sender_ip_address)) {
+      for (InternetDatagram& dgram: outbound_datagrams_[msg.sender_ip_address]) {
+        send_datagram(dgram, Address::from_ipv4_numeric(msg.sender_ip_address));
       }
 
       // Remove outstanding requests
-      outbound_datagrams_.erase(arp_req.sender_ip_address);
-      outbound_arp_requests_.erase(arp_req.sender_ip_address);
+      outbound_datagrams_.erase(msg.sender_ip_address);
+      outbound_arp_requests_.erase(msg.sender_ip_address);
     }
   }
-
 }
 
 //! \param[in] ms_since_last_tick the number of milliseconds since the last call to this method
@@ -163,5 +162,4 @@ void NetworkInterface::tick( const size_t ms_since_last_tick )
           ++it;
       }
   }
-
 }
